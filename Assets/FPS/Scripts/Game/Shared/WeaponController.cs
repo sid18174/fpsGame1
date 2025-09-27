@@ -12,6 +12,7 @@ namespace Unity.FPS.Game
         Charge,
         Burst,
         Beam,
+        Melee,
     }
 
     [System.Serializable]
@@ -123,6 +124,28 @@ namespace Unity.FPS.Game
         [Tooltip("Smoothing applied when updating the beam end position")] [Range(1f, 50f)]
         public float BeamEffectSmoothing = 12f;
 
+        [Header("Melee Parameters")]
+        [Tooltip("Damage dealt when performing a melee attack")]
+        public float MeleeDamage = 50f;
+
+        [Tooltip("Maximum distance reached by the melee strike")]
+        public float MeleeRange = 2.5f;
+
+        [Tooltip("Radius of the melee hit detection sphere")]
+        public float MeleeHitRadius = 0.75f;
+
+        [Tooltip("Minimum delay between two melee attacks")]
+        public float MeleeCooldown = 0.7f;
+
+        [Tooltip("Layers that the melee strike can damage")]
+        public LayerMask MeleeHitLayers = ~0;
+
+        [Tooltip("Optional VFX spawned on melee impact")]
+        public GameObject MeleeImpactVfx;
+
+        [Tooltip("Sound played when the melee strike connects")]
+        public AudioClip MeleeImpactSfx;
+
         [Header("Charging parameters (charging weapons only)")]
         [Tooltip("Trigger a shot when maximum charge is reached")]
         public bool AutomaticReleaseOnCharged;
@@ -199,6 +222,7 @@ namespace Unity.FPS.Game
         LineRenderer m_BeamLineInstance;
         GameObject m_BeamImpactInstance;
         Vector3 m_BeamEndPoint;
+        float m_NextMeleeAttackTime;
 
         void Awake()
         {
@@ -444,6 +468,14 @@ namespace Unity.FPS.Game
                     }
 
                     return m_IsBeamFiring;
+
+                case WeaponShootType.Melee:
+                    if (inputDown)
+                    {
+                        return TryMeleeAttack();
+                    }
+
+                    return false;
 
                 default:
                     return false;
@@ -691,6 +723,88 @@ namespace Unity.FPS.Game
         void OnDisable()
         {
             StopBeam();
+        }
+
+        bool TryMeleeAttack()
+        {
+            if (Time.time < m_NextMeleeAttackTime)
+            {
+                return false;
+            }
+
+            Vector3 origin = WeaponMuzzle != null ? WeaponMuzzle.position : transform.position;
+            Vector3 forward = WeaponMuzzle != null ? WeaponMuzzle.forward : transform.forward;
+
+            RaycastHit? firstHit = null;
+            bool damagedTarget = false;
+
+            RaycastHit[] hits = Physics.SphereCastAll(origin, MeleeHitRadius, forward, MeleeRange, MeleeHitLayers,
+                QueryTriggerInteraction.Ignore);
+
+            HashSet<Damageable> damaged = new HashSet<Damageable>();
+
+            foreach (var hit in hits)
+            {
+                if (Owner != null && hit.collider.transform.IsChildOf(Owner.transform))
+                {
+                    continue;
+                }
+
+                Damageable damageable = hit.collider.GetComponentInParent<Damageable>();
+                if (damageable != null && !damaged.Contains(damageable))
+                {
+                    damageable.InflictDamage(MeleeDamage, false, Owner);
+                    damaged.Add(damageable);
+                    damagedTarget = true;
+
+                    if (firstHit == null)
+                    {
+                        firstHit = hit;
+                    }
+                }
+            }
+
+            if (damagedTarget)
+            {
+                PlayMeleeFeedback(firstHit?.point ?? (origin + forward * MeleeRange));
+            }
+
+            TriggerMeleeAnimationFeedback();
+
+            m_LastTimeShot = Time.time;
+            m_NextMeleeAttackTime = Time.time + Mathf.Max(0.01f, MeleeCooldown);
+
+            return true;
+        }
+
+        void TriggerMeleeAnimationFeedback()
+        {
+            if (WeaponAnimator)
+            {
+                WeaponAnimator.SetTrigger(k_AnimAttackParameter);
+            }
+
+            if (ShootSfx && !UseContinuousShootSound)
+            {
+                m_ShootAudioSource.PlayOneShot(ShootSfx);
+            }
+
+            OnShoot?.Invoke();
+            OnShootProcessed?.Invoke();
+        }
+
+        void PlayMeleeFeedback(Vector3 position)
+        {
+            if (MeleeImpactVfx != null)
+            {
+                GameObject vfx = Instantiate(MeleeImpactVfx, position, Quaternion.identity);
+                Destroy(vfx, 2f);
+            }
+
+            if (MeleeImpactSfx != null)
+            {
+                PlaySFX(MeleeImpactSfx);
+            }
         }
 
         void HandleShoot()

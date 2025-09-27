@@ -2,6 +2,7 @@
 using Unity.FPS.Game;
 using Unity.FPS.Gameplay;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace Unity.FPS.UI
 {
@@ -12,6 +13,9 @@ namespace Unity.FPS.UI
 
         [Tooltip("Prefab for displaying weapon ammo")]
         public GameObject AmmoCounterPrefab;
+
+        [Tooltip("UI image that displays the currently equipped weapon icon")]
+        public Image ActiveWeaponIcon;
 
         PlayerWeaponsManager m_PlayerWeaponsManager;
         List<AmmoCounter> m_AmmoCounters = new List<AmmoCounter>();
@@ -66,7 +70,24 @@ namespace Unity.FPS.UI
 
         void ChangeWeapon(WeaponController weapon)
         {
+            UpdateActiveWeaponIcon(weapon);
             UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(AmmoPanel);
+        }
+
+        void UpdateActiveWeaponIcon(WeaponController weapon)
+        {
+            if (ActiveWeaponIcon == null)
+                return;
+
+            if (weapon != null && weapon.WeaponIcon != null)
+            {
+                ActiveWeaponIcon.sprite = weapon.WeaponIcon;
+                ActiveWeaponIcon.enabled = true;
+            }
+            else
+            {
+                ActiveWeaponIcon.enabled = false;
+            }
         }
     }
 }

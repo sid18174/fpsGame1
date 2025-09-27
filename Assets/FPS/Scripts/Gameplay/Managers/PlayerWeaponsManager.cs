@@ -222,6 +222,20 @@ namespace Unity.FPS.Gameplay
         // Iterate on all weapon slots to find the next valid weapon to switch to
         public void SwitchWeapon(bool ascendingOrder)
         {
+            if (ActiveWeaponIndex < 0)
+            {
+                for (int i = 0; i < m_WeaponSlots.Length; i++)
+                {
+                    if (GetWeaponAtSlotIndex(i) != null)
+                    {
+                        SwitchToWeaponIndex(i, true);
+                        return;
+                    }
+                }
+
+                return;
+            }
+
             int newWeaponIndex = -1;
             int closestSlotDistance = m_WeaponSlots.Length;
             for (int i = 0; i < m_WeaponSlots.Length; i++)
@@ -441,11 +455,18 @@ namespace Unity.FPS.Gameplay
         // Adds a weapon to our inventory
         public bool AddWeapon(WeaponController weaponPrefab)
         {
+            if (weaponPrefab == null)
+            {
+                return false;
+            }
+
             // if we already hold this weapon type (a weapon coming from the same source prefab), don't add the weapon
             if (HasWeapon(weaponPrefab) != null)
             {
                 return false;
             }
+
+            EnsureCategorySlotAvailable(weaponPrefab);
 
             // search our weapon slots for the first free one, assign the weapon to it, and return true if we found one. Return false otherwise
             for (int i = 0; i < m_WeaponSlots.Length; i++)
@@ -500,26 +521,7 @@ namespace Unity.FPS.Gameplay
                 // when weapon found, remove it
                 if (m_WeaponSlots[i] == weaponInstance)
                 {
-                    m_WeaponSlots[i] = null;
-
-                    if (m_PreviousWeaponIndex == i)
-                    {
-                        m_PreviousWeaponIndex = -1;
-                    }
-
-                    if (OnRemovedWeapon != null)
-                    {
-                        OnRemovedWeapon.Invoke(weaponInstance, i);
-                    }
-
-                    Destroy(weaponInstance.gameObject);
-
-                    // Handle case of removing active weapon (switch to next weapon)
-                    if (i == ActiveWeaponIndex)
-                    {
-                        SwitchWeapon(true);
-                    }
-
+                    RemoveWeaponInternal(i, true);
                     return true;
                 }
             }
@@ -543,6 +545,39 @@ namespace Unity.FPS.Gameplay
 
             // if we didn't find a valid active weapon in our weapon slots, return null
             return null;
+        }
+
+        public void InitializeLoadout(WeaponController meleeWeapon, WeaponController rangedWeapon)
+        {
+            ClearAllWeapons();
+
+            StartingWeapons.Clear();
+
+            if (meleeWeapon != null)
+            {
+                StartingWeapons.Add(meleeWeapon);
+                AddWeapon(meleeWeapon);
+            }
+
+            if (rangedWeapon != null)
+            {
+                StartingWeapons.Add(rangedWeapon);
+                AddWeapon(rangedWeapon);
+            }
+
+            SwitchWeapon(true);
+        }
+
+        public void ClearAllWeapons()
+        {
+            for (int i = 0; i < m_WeaponSlots.Length; i++)
+            {
+                RemoveWeaponInternal(i, false);
+            }
+
+            ActiveWeaponIndex = -1;
+            m_PreviousWeaponIndex = -1;
+            m_WeaponSwitchState = WeaponSwitchState.Down;
         }
 
         public bool SwitchToPreviousWeapon()
@@ -586,6 +621,65 @@ namespace Unity.FPS.Gameplay
             if (newWeapon != null)
             {
                 newWeapon.ShowWeapon(true);
+            }
+        }
+
+        void EnsureCategorySlotAvailable(WeaponController weaponPrefab)
+        {
+            bool isMelee = weaponPrefab.ShootType == WeaponShootType.Melee;
+
+            for (int i = 0; i < m_WeaponSlots.Length; i++)
+            {
+                WeaponController existing = m_WeaponSlots[i];
+                if (existing == null)
+                {
+                    continue;
+                }
+
+                bool shouldRemove = isMelee ? existing.ShootType == WeaponShootType.Melee : existing.ShootType != WeaponShootType.Melee;
+                if (shouldRemove)
+                {
+                    RemoveWeaponInternal(i, false);
+                }
+            }
+        }
+
+        void RemoveWeaponInternal(int index, bool switchAfterRemoval)
+        {
+            if (index < 0 || index >= m_WeaponSlots.Length)
+            {
+                return;
+            }
+
+            WeaponController weaponInstance = m_WeaponSlots[index];
+            if (weaponInstance == null)
+            {
+                return;
+            }
+
+            bool wasActive = index == ActiveWeaponIndex;
+
+            m_WeaponSlots[index] = null;
+
+            if (m_PreviousWeaponIndex == index)
+            {
+                m_PreviousWeaponIndex = -1;
+            }
+
+            if (OnRemovedWeapon != null)
+            {
+                OnRemovedWeapon.Invoke(weaponInstance, index);
+            }
+
+            Destroy(weaponInstance.gameObject);
+
+            if (wasActive)
+            {
+                ActiveWeaponIndex = -1;
+                if (switchAfterRemoval)
+                {
+                    SwitchWeapon(true);
+                }
             }
         }
     }
