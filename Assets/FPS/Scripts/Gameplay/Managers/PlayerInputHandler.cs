@@ -239,6 +239,16 @@ namespace Unity.FPS.Gameplay
             return 0;
         }
 
+        public bool GetQuickSwitchInputDown()
+        {
+            if (CanProcessInput() && Keyboard.current != null)
+            {
+                return Keyboard.current.qKey.wasPressedThisFrame;
+            }
+
+            return false;
+        }
+
         public int GetSelectWeaponInput()
         {
             if (CanProcessInput())

@@ -92,6 +92,7 @@ namespace Unity.FPS.Gameplay
         float m_TimeStartedWeaponSwitch;
         WeaponSwitchState m_WeaponSwitchState;
         int m_WeaponSwitchNewWeaponIndex;
+        int m_PreviousWeaponIndex = -1;
 
         void Start()
         {
@@ -157,6 +158,14 @@ namespace Unity.FPS.Gameplay
                 (activeWeapon == null || !activeWeapon.IsCharging) &&
                 (m_WeaponSwitchState == WeaponSwitchState.Up || m_WeaponSwitchState == WeaponSwitchState.Down))
             {
+                if (m_InputHandler.GetQuickSwitchInputDown())
+                {
+                    if (SwitchToPreviousWeapon())
+                    {
+                        return;
+                    }
+                }
+
                 int switchWeaponInput = m_InputHandler.GetSwitchWeaponInput();
                 if (switchWeaponInput != 0)
                 {
@@ -240,6 +249,11 @@ namespace Unity.FPS.Gameplay
         {
             if (force || (newWeaponIndex != ActiveWeaponIndex && newWeaponIndex >= 0))
             {
+                if (ActiveWeaponIndex >= 0)
+                {
+                    m_PreviousWeaponIndex = ActiveWeaponIndex;
+                }
+
                 // Store data related to weapon switching animation
                 m_WeaponSwitchNewWeaponIndex = newWeaponIndex;
                 m_TimeStartedWeaponSwitch = Time.time;
@@ -488,6 +502,11 @@ namespace Unity.FPS.Gameplay
                 {
                     m_WeaponSlots[i] = null;
 
+                    if (m_PreviousWeaponIndex == i)
+                    {
+                        m_PreviousWeaponIndex = -1;
+                    }
+
                     if (OnRemovedWeapon != null)
                     {
                         OnRemovedWeapon.Invoke(weaponInstance, i);
@@ -524,6 +543,19 @@ namespace Unity.FPS.Gameplay
 
             // if we didn't find a valid active weapon in our weapon slots, return null
             return null;
+        }
+
+        public bool SwitchToPreviousWeapon()
+        {
+            if (m_PreviousWeaponIndex >= 0 &&
+                m_PreviousWeaponIndex != ActiveWeaponIndex &&
+                GetWeaponAtSlotIndex(m_PreviousWeaponIndex) != null)
+            {
+                SwitchToWeaponIndex(m_PreviousWeaponIndex);
+                return true;
+            }
+
+            return false;
         }
 
         // Calculates the "distance" between two weapon slot indexes

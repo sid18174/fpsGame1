@@ -28,9 +28,9 @@ namespace Unity.FPS.AI
         [Header("Sound")] public AudioClip MovementSound;
         public MinMaxFloat PitchDistortionMovementSpeed;
 
-        public AIState AiState { get; private set; }
-        EnemyController m_EnemyController;
-        AudioSource m_AudioSource;
+        public AIState AiState { get; protected set; }
+        protected EnemyController m_EnemyController;
+        protected AudioSource m_AudioSource;
 
         const string k_AnimMoveSpeedParameter = "MoveSpeed";
         const string k_AnimAttackParameter = "Attack";
@@ -74,7 +74,7 @@ namespace Unity.FPS.AI
                 moveSpeed / m_EnemyController.NavMeshAgent.speed);
         }
 
-        void UpdateAiStateTransitions()
+        protected virtual void UpdateAiStateTransitions()
         {
             // Handle transitions 
             switch (AiState)
@@ -99,7 +99,7 @@ namespace Unity.FPS.AI
             }
         }
 
-        void UpdateCurrentAiState()
+        protected virtual void UpdateCurrentAiState()
         {
             // Handle logic 
             switch (AiState)
@@ -131,12 +131,12 @@ namespace Unity.FPS.AI
             }
         }
 
-        void OnAttack()
+        protected virtual void OnAttack()
         {
             Animator.SetTrigger(k_AnimAttackParameter);
         }
 
-        void OnDetectedTarget()
+        protected virtual void OnDetectedTarget()
         {
             if (AiState == AIState.Patrol)
             {
@@ -156,7 +156,7 @@ namespace Unity.FPS.AI
             Animator.SetBool(k_AnimAlertedParameter, true);
         }
 
-        void OnLostTarget()
+        protected virtual void OnLostTarget()
         {
             if (AiState == AIState.Follow || AiState == AIState.Attack)
             {
@@ -171,7 +171,7 @@ namespace Unity.FPS.AI
             Animator.SetBool(k_AnimAlertedParameter, false);
         }
 
-        void OnDamaged()
+        protected virtual void OnDamaged()
         {
             if (RandomHitSparks.Length > 0)
             {

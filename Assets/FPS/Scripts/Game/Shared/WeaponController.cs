@@ -10,6 +10,8 @@ namespace Unity.FPS.Game
         Manual,
         Automatic,
         Charge,
+        Burst,
+        Beam,
     }
 
     [System.Serializable]
@@ -94,6 +96,33 @@ namespace Unity.FPS.Game
         [Tooltip("Maximum amount of ammo in the gun")]
         public int MaxAmmo = 8;
 
+        [Header("Burst Parameters")] [Tooltip("Number of shots fired when the weapon uses burst fire")]
+        [Range(1, 6)] public int BurstShotCount = 3;
+
+        [Tooltip("Delay between individual shots in a burst")]
+        public float BurstInterval = 0.08f;
+
+        [Header("Beam Parameters")]
+        [Tooltip("Maximum range of beam-based weapons")]
+        public float BeamMaxDistance = 40f;
+
+        [Tooltip("Damage dealt per second while the beam is firing")]
+        public float BeamDamagePerSecond = 40f;
+
+        [Tooltip("Ammo consumed per second while the beam is firing")]
+        public float BeamAmmoUsageRate = 5f;
+
+        [Tooltip("Layers that the beam can collide with")] public LayerMask BeamCollisionLayers = ~0;
+
+        [Tooltip("Optional line renderer prefab visualising the beam")]
+        public LineRenderer BeamLineRendererPrefab;
+
+        [Tooltip("Optional VFX prefab spawned at the beam impact point")]
+        public GameObject BeamImpactVfxPrefab;
+
+        [Tooltip("Smoothing applied when updating the beam end position")] [Range(1f, 50f)]
+        public float BeamEffectSmoothing = 12f;
+
         [Header("Charging parameters (charging weapons only)")]
         [Tooltip("Trigger a shot when maximum charge is reached")]
         public bool AutomaticReleaseOnCharged;
@@ -162,6 +191,14 @@ namespace Unity.FPS.Game
         const string k_AnimAttackParameter = "Attack";
 
         private Queue<Rigidbody> m_PhysicalAmmoPool;
+        bool m_IsBurstShooting;
+        int m_BurstShotsRemaining;
+        float m_NextBurstShotTime;
+
+        bool m_IsBeamFiring;
+        LineRenderer m_BeamLineInstance;
+        GameObject m_BeamImpactInstance;
+        Vector3 m_BeamEndPoint;
 
         void Awake()
         {
@@ -239,6 +276,8 @@ namespace Unity.FPS.Game
             UpdateAmmo();
             UpdateCharge();
             UpdateContinuousShootSound();
+            UpdateBurstShooting();
+            UpdateBeam();
 
             if (Time.deltaTime > 0)
             {
@@ -385,6 +424,27 @@ namespace Unity.FPS.Game
 
                     return false;
 
+                case WeaponShootType.Burst:
+                    if (inputDown)
+                    {
+                        return TryBeginBurst();
+                    }
+
+                    return false;
+
+                case WeaponShootType.Beam:
+                    if (inputDown)
+                    {
+                        TryStartBeam();
+                    }
+
+                    if (inputUp)
+                    {
+                        StopBeam();
+                    }
+
+                    return m_IsBeamFiring;
+
                 default:
                     return false;
             }
@@ -435,6 +495,202 @@ namespace Unity.FPS.Game
             }
 
             return false;
+        }
+
+        bool TryBeginBurst()
+        {
+            if (m_IsBurstShooting)
+            {
+                return false;
+            }
+
+            if (m_CurrentAmmo >= 1f && m_LastTimeShot + DelayBetweenShots < Time.time)
+            {
+                m_IsBurstShooting = true;
+                m_BurstShotsRemaining = Mathf.Min(Mathf.FloorToInt(m_CurrentAmmo), Mathf.Max(1, BurstShotCount));
+
+                if (m_BurstShotsRemaining <= 0)
+                {
+                    m_IsBurstShooting = false;
+                    return false;
+                }
+
+                FireBurstShot();
+                m_BurstShotsRemaining--;
+                m_NextBurstShotTime = Time.time + BurstInterval;
+
+                if (m_BurstShotsRemaining <= 0)
+                {
+                    m_IsBurstShooting = false;
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        void FireBurstShot()
+        {
+            HandleShoot();
+            m_CurrentAmmo = Mathf.Max(0f, m_CurrentAmmo - 1f);
+        }
+
+        void UpdateBurstShooting()
+        {
+            if (!m_IsBurstShooting)
+            {
+                return;
+            }
+
+            if (m_BurstShotsRemaining <= 0 || m_CurrentAmmo < 1f)
+            {
+                m_IsBurstShooting = false;
+                return;
+            }
+
+            if (Time.time >= m_NextBurstShotTime)
+            {
+                FireBurstShot();
+                m_BurstShotsRemaining--;
+                m_NextBurstShotTime = Time.time + BurstInterval;
+
+                if (m_BurstShotsRemaining <= 0)
+                {
+                    m_IsBurstShooting = false;
+                }
+            }
+        }
+
+        void TryStartBeam()
+        {
+            if (m_IsBeamFiring || m_CurrentAmmo <= 0f || m_LastTimeShot + DelayBetweenShots > Time.time)
+            {
+                return;
+            }
+
+            m_IsBeamFiring = true;
+            EnsureBeamVisuals();
+            UpdateBeamVisuals(WeaponMuzzle.position, WeaponMuzzle.position + WeaponMuzzle.forward * BeamMaxDistance, false);
+
+            OnShoot?.Invoke();
+            OnShootProcessed?.Invoke();
+        }
+
+        void StopBeam()
+        {
+            if (!m_IsBeamFiring)
+            {
+                return;
+            }
+
+            m_IsBeamFiring = false;
+            m_WantsToShoot = false;
+
+            if (m_BeamLineInstance != null)
+            {
+                m_BeamLineInstance.enabled = false;
+            }
+
+            if (m_BeamImpactInstance != null)
+            {
+                m_BeamImpactInstance.SetActive(false);
+            }
+        }
+
+        void UpdateBeam()
+        {
+            if (!m_IsBeamFiring)
+            {
+                return;
+            }
+
+            if (m_CurrentAmmo <= 0f)
+            {
+                StopBeam();
+                return;
+            }
+
+            Vector3 origin = WeaponMuzzle.position;
+            Vector3 direction = WeaponMuzzle.forward;
+            Vector3 targetPoint = origin + direction * BeamMaxDistance;
+
+            if (Physics.Raycast(origin, direction, out RaycastHit hit, BeamMaxDistance, BeamCollisionLayers,
+                    QueryTriggerInteraction.Ignore))
+            {
+                targetPoint = hit.point;
+
+                Health health = hit.collider.GetComponentInParent<Health>();
+                if (health != null && (Owner == null || !hit.collider.transform.IsChildOf(Owner.transform)))
+                {
+                    health.TakeDamage(BeamDamagePerSecond * Time.deltaTime, Owner);
+                }
+
+                if (m_BeamImpactInstance != null)
+                {
+                    m_BeamImpactInstance.transform.position = targetPoint;
+                    m_BeamImpactInstance.transform.forward = hit.normal;
+                    if (!m_BeamImpactInstance.activeSelf)
+                    {
+                        m_BeamImpactInstance.SetActive(true);
+                    }
+                }
+            }
+            else if (m_BeamImpactInstance != null && m_BeamImpactInstance.activeSelf)
+            {
+                m_BeamImpactInstance.SetActive(false);
+            }
+
+            UpdateBeamVisuals(origin, targetPoint, true);
+
+            float ammoConsumed = BeamAmmoUsageRate * Time.deltaTime;
+            m_CurrentAmmo = Mathf.Max(0f, m_CurrentAmmo - ammoConsumed);
+            m_LastTimeShot = Time.time;
+        }
+
+        void EnsureBeamVisuals()
+        {
+            if (BeamLineRendererPrefab != null && m_BeamLineInstance == null)
+            {
+                m_BeamLineInstance = Instantiate(BeamLineRendererPrefab, WeaponMuzzle);
+            }
+
+            if (m_BeamLineInstance != null)
+            {
+                m_BeamLineInstance.positionCount = 2;
+                m_BeamLineInstance.enabled = true;
+            }
+
+            if (BeamImpactVfxPrefab != null && m_BeamImpactInstance == null)
+            {
+                m_BeamImpactInstance = Instantiate(BeamImpactVfxPrefab);
+                m_BeamImpactInstance.SetActive(false);
+            }
+        }
+
+        void UpdateBeamVisuals(Vector3 origin, Vector3 targetPoint, bool smooth)
+        {
+            if (m_BeamLineInstance == null)
+            {
+                return;
+            }
+
+            if (!smooth)
+            {
+                m_BeamEndPoint = targetPoint;
+            }
+            else
+            {
+                m_BeamEndPoint = Vector3.Lerp(m_BeamEndPoint, targetPoint, BeamEffectSmoothing * Time.deltaTime);
+            }
+
+            m_BeamLineInstance.SetPosition(0, origin);
+            m_BeamLineInstance.SetPosition(1, m_BeamEndPoint);
+        }
+
+        void OnDisable()
+        {
+            StopBeam();
         }
 
         void HandleShoot()
